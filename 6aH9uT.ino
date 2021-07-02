@@ -1,6 +1,3 @@
-// Пины
-/*#define LED 13
-#define EMG1 A0 */
 #include <Mouse.h>
 #include <Keyboard.h>
 #define BITRONICS 0
@@ -44,8 +41,8 @@ struct
 #define THRESHOLD 25
 #define CLICKTHRESHOLD 60
 #define THRESHOLDFREQ 15
-uint8_t val1[1000];
-uint8_t val2[1000];
+uint8_t val1[500];
+uint8_t val2[500];
 uint16_t maxV1 = 0, minV1 = 0;
 uint16_t maxV2 = 0, minV2 = 0;
 uint16_t sData1 = 0; uint16_t sData2 = 0;
@@ -99,16 +96,17 @@ void calc() {
     case 1:
       freq1 = 0;
       
-      for(uint8_t i = 999; i > 0; i--)
+      for(uint8_t i = 499; i > 0; i--)
       {
         freq1 += (val1[i] <= 128 && val1[i-1] >= 128) || (val1[i] >= 128 && val1[i-1] <= 128);
         val1[i] = val1[i - 1];
       }
-      val1[0] = map(analogRead(EMG1), 0, 1023, 0, 255);
+      freq1 *= 2;
+      val1[0] = analogRead(EMG1) >> 2;
       
       maxV1 = 0;
       minV1 = 0;
-      for (int k = 0; k < arrSize; k++)
+      for (uint16_t k = 0; k < arrSize; k++)
       {
         if (val1[k] > maxV1)
           maxV1 = val1[k];
@@ -120,16 +118,17 @@ void calc() {
     case 2:
       freq2 = 0;
       
-      for(uint8_t i = 999; i > 0; i--)
+      for(uint8_t i = 499; i > 0; i--)
       {
         freq2 += (val2[i] <= 128 && val2[i-1] >= 128) || (val2[i] >= 128 && val2[i-1] <= 128);
         val2[i] = val2[i - 1];
       }
-      val2[0] = map(analogRead(EMG2), 0, 1023, 0, 255);
+      freq2 *= 2;
+      val2[0] = analogRead(EMG2) >> 2;
       
       maxV2 = 0;
       minV2 = 0;
-      for (int k = 0; k < arrSize; k++)
+      for (uint16_t k = 0; k < arrSize; k++)
       {
         if (val2[k] > maxV2)
           maxV2 = val2[k];
@@ -145,13 +144,13 @@ void calc() {
 void sendData()
 {
   #if(BITRONICS)
-  Serial.write("A0");
+  Serial.write(F("A0"));
   Serial.write(val1[0]);  
-  Serial.write("A2");
+  Serial.write(F("A1"));
   Serial.write(map(freq1, 0, 128, 0, 255));
-  Serial.write("A1");
+  Serial.write(F("A2"));
   Serial.write(bools.trig1 * 250);
-  Serial.write("A3");
+  Serial.write(F("A3"));
   Serial.write(sData1);
   #endif
   return;
