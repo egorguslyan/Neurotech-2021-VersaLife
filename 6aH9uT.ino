@@ -8,6 +8,8 @@
   #define STRELA 1
   // Использовать мышь?
   #define MOUSE 1
+  // Задержка мыши. Больше — производительнее, меньше — плавнее
+  #define MOUSEDELAY 10
   // Левша
   #define LEVSHA 0
   // Пины
@@ -190,9 +192,9 @@ void makeAMove()
     #if(MOUSE)
     // Определяем ускорение курсора
     if(!bools.lock && millis() % 
-      ((millis() - lrtimer > 1500) ?
+      (((millis() - lrtimer > 1500) ?
         ((millis() - lrtimer > 3000) ? 1 : 3) :
-        5) == 0)
+        5) * MOUSEDELAY) == 0)
       // Двигаем курсор в нужном направлении
       Mouse.move((bools.shoulder ? 1 : -1) * (LEVSHA ? -1 : 1), 0, 0);
       #endif
@@ -242,27 +244,47 @@ void setup()
 
 void loop()
 {
-  // Таймер цикла
-  static uint32_t timer = 0;
+  // Таймеры
+  static uint32_t timer1 = 0;
+  static uint32_t timer2 = 0;
+  static uint32_t timer3 = 0;
+  static uint32_t timer4 = 0;
 
   // Каждую миллисекунду
-  if(millis() - timer >= 1)
+  if(millis() - timer1 >= 1)
   {
-    timer = millis();
+    timer1 = millis();
 
     // Считываем, вычисляем
     calc(&emg1);
     calc(&emg2);
+  }
+  
+  if(millis() - timer2 >= 100)
+  {
+    timer2 = millis();
+    
     // Отправляем
     sendData();
+  }
+  
+  if(millis() - timer3 >= MOUSEDELAY)
+  {
+    timer3 = millis();
+    
     // Двигаем
     makeAMove();
   }
+  
+  if(millis() - timer4 >= 200)
+  {
+    timer4 = millis();
+    
+    // Калибровка по нажатию кнопки
+    if(digitalRead(CALIBBTN)) calibrate();
 
-  // Калибровка по нажатию кнопки
-  if(digitalRead(CALIBBTN)) calibrate();
-
-  // T-триггер кнопки блокировки движения курсора
-  bools.lock ^= (digitalRead(LOCKBTN) && !bools.prevLockBtn);
-  bools.prevLockBtn = digitalRead(LOCKBTN);
+    // T-триггер кнопки блокировки движения курсора
+    bools.lock ^= (digitalRead(LOCKBTN) && !bools.prevLockBtn);
+    bools.prevLockBtn = digitalRead(LOCKBTN);
+  }
 }
