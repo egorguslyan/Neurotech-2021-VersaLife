@@ -2,14 +2,14 @@
 #include <Keyboard.h>
 // Настройки
   // Вывод в BiTronics, иначе в Serial
-  #define BITRONICS 0
+  #define BITRONICS 1
   // Подключение дополнительных библиотек и переназначение пинов для Стрелы от Амперки
   // Если используется иная плата, то чуть ниже нужно добавить дефайны недостающих пинов
   #define STRELA 1
   // Использовать мышь?
   #define MOUSE 1
   // Задержка мыши. Больше — производительнее, меньше — плавнее
-  #define MOUSEDELAY 10
+  #define MOUSEDELAY 1
   // Левша
   #define LEVSHA 0
   // Пины
@@ -26,6 +26,7 @@
   #define digitalRead(a) uDigitalRead(a)
   #define analogWrite(a, b) uAnalogWrite(a, b)
   #define analogRead(a) uAnalogRead(a)
+  #define pinMode(a, b) uPinMode(a, b)
   // Пины
   #define LED L1
     // Бицепс
@@ -37,15 +38,17 @@
 #endif
 
 // Магические числа
-  // Кол-во значений для анализа
-  #define arrSize 150
+  // Кол-во значений для анализа триггера
+  #define ARRSIZETRIG 150
+  // Кол-во значений для анализа частоты
+  #define ARRSIZEFREQ 50
   // Кол-во попугаев, на которое должна напрячься мышца, чтобы сработал триггер
-  #define THRESHOLD 15
-  #define CLICKTHRESHOLD 60
+  #define THRESHOLD 100
+  #define ELTHRESHOLD 160
   // Кол-во попугаев, на которое должна увеличиться частота локтя, чтобы сработал триггер
-  #define ELTHRESHOLDFREQ 15
+  #define ELTHRESHOLDFREQ 300
   // Кол-во попугаев, на которое должна увеличиться частота плеча, чтобы сработал триггер
-  #define SHTHRESHOLDFREQ 15 //80
+  #define SHTHRESHOLDFREQ 300 //80
 
 // Структура для флагов
 struct
@@ -57,6 +60,11 @@ struct
   uint8_t prevLockBtn : 1;
 } bools;
 
+struct diffAvr
+{
+  uint8_t diff, avr;           // Среднее, разница
+};
+
 // Структура данных для каждого датчика
 struct values4emg
 {
@@ -64,21 +72,48 @@ struct values4emg
   uint8_t val[250];             // Сырые данные
   uint8_t midlFiltr;            // Вспомогательный фильтр
   uint8_t valFiltr[250];        // Фильтр
-  uint16_t max, min, avr, diff; // Минимум, максимум, среднее, разница
+  uint8_t valAvr[ARRSIZEFREQ];  // Среднее
+  diffAvr da, daFiltr;          // Среднее среди ARRSIZE значений
   uint16_t freq;                // Частота сигнала
   uint16_t threshold;           // Порог силы
   uint16_t thresholdFreq;       // Порог частоты
   uint8_t trig : 1;             // Триггер
   uint8_t prevTrig : 1;         // Предыдущий триггер
+  uint8_t trigFiltr : 1;        // Триггер
+  uint8_t prevTrigFiltr : 1;    // Предыдущий триггер
 } emg1, emg2;
 
 // Калибровка порогов срабатывания
 void calibrate()
 {
-  emg1.threshold = emg1.max - emg1.min + THRESHOLD;
-  emg2.threshold = emg2.max - emg2.min + CLICKTHRESHOLD;
+  emg1.threshold = emg1.da.diff + THRESHOLD;
+  emg2.threshold = emg2.daFiltr.diff + ELTHRESHOLD;
   emg1.thresholdFreq = emg1.freq + ELTHRESHOLDFREQ;
   emg2.thresholdFreq = emg2.freq + SHTHRESHOLDFREQ;
+}
+
+diffAvr calcAvr(uint8_t val[], uint8_t arrSize)
+{
+  // Вычисляем разницу
+  uint8_t max = 0;
+  uint8_t min = 255;
+  for (uint16_t k = 0; k < arrSize; k++)
+  {
+    if (val[k] > max)
+      max = val[k];
+    if (val[k] < min)
+      min = val[k];
+  }
+  uint8_t diff = max - min;
+
+  // Вычисляем среднее
+  uint8_t avr = min + (diff / 2);
+
+  // Упаковка и возврат
+  diffAvr result;
+  result.diff = diff;
+  result.avr = avr;
+  return result;
 }
 
 void calc(values4emg *emg)
@@ -89,12 +124,18 @@ void calc(values4emg *emg)
   {
     emg->val[i] = emg->val[i - 1];
     emg->valFiltr[i] = emg->valFiltr[i - 1];
-    emg->freq +=  (emg->val[i] <= emg->avr && emg->val[i-1] >= emg->avr) ||
-                  (emg->val[i] >= emg->avr && emg->val[i-1] <= emg->avr);
   }
-
+  for(uint8_t i = 0; i < ARRSIZEFREQ; i++)
+  {
+    emg->valAvr[i] = emg->valAvr[i - 1];
+  }
+  for(uint8_t i = 0; i < ARRSIZEFREQ; i++)
+  {
+    emg->freq +=  (emg->val[i] <= emg->valAvr[i] && emg->val[i-1] >= emg->valAvr[i-1]) ||
+                  (emg->val[i] >= emg->valAvr[i] && emg->val[i-1] <= emg->valAvr[i-1]);
+  }
   // Увеличиваем значение частоты, чтобы можно было различить на графике
-  emg->freq *= 4;
+  emg->freq *= 20;
 
   // Считываем значение с датчика и подгоняем под формат BiTronics
   emg->val[0] = analogRead(emg->pin) >> 2;
@@ -103,27 +144,20 @@ void calc(values4emg *emg)
   emg->midlFiltr =  emg->trig ?
                     emg->val[0] :
                     (63 * emg->midlFiltr + emg->val[0]) >> 6;
-  // Фильтруем помехи
-  emg->valFiltr[0] = (7 * emg->valFiltr[0] + emg->midlFiltr) >> 3;
+  // Вычитаем пульс
+  //emg->valFiltr[0] = (7 * emg->valFiltr[0] + emg->midlFiltr) >> 3;
+  emg->valFiltr[0] = emg->val[0] - emg->da.avr + 128;
 
-  // Вычисляем разницу
-  emg->max = 0;
-  emg->min = 255;
-  for (uint16_t k = 0; k < arrSize; k++)
-  {
-    if (emg->valFiltr[k] > emg->max)
-      emg->max = emg->valFiltr[k];
-    if (emg->valFiltr[k] < emg->min)
-      emg->min = emg->valFiltr[k];
-  }
-  emg->diff = emg->max - emg->min;
+  // Вычисляем разницу и среднее
+  emg->da = calcAvr(emg->val, ARRSIZEFREQ);
+  emg->daFiltr = calcAvr(emg->valFiltr, ARRSIZETRIG);
+  emg->valAvr[0] = emg->da.avr;
 
   // Разница преодолела порог?
   emg->prevTrig = emg->trig;
-  emg->trig = emg->diff > emg->threshold;
-
-  // Вычисляем среднее
-  emg->avr = emg->min + (emg->diff / 2);
+  emg->prevTrigFiltr = emg->trigFiltr;
+  emg->trig = emg->da.diff > emg->threshold;
+  emg->trigFiltr = emg->daFiltr.diff > emg->threshold;
 }
 
 // Отправляем данные в Serial или BiTronics
@@ -131,21 +165,19 @@ void sendData()
 {
   #if(BITRONICS)
   Serial.write("A0");
-  Serial.write(emg1.valFiltr[0]);  
+  Serial.write(map(millis() % 2 ? emg2.daFiltr.diff : emg2.threshold, 0, 255, 0, 255));  
   Serial.write("A2");
-  Serial.write(emg1.freq);
+  Serial.write(map(millis() % 2 ? emg2.freq : emg2.thresholdFreq, 0, 1023, 0, 255));
   Serial.write("A1");
   Serial.write(emg2.valFiltr[0]);
   Serial.write("A3");
-  Serial.write(emg2.freq);
+  Serial.write(emg2.da.avr);
   #else
-  Serial.print(emg1.valFiltr[0]);
+  Serial.print(emg1.val[0]);
   Serial.print(",");
-  Serial.print(emg1.min);
+  Serial.print(emg1.freq);
   Serial.print(",");
-  Serial.print(emg1.max);
-  Serial.print(",");
-  Serial.println(emg1.avr);
+  Serial.println(emg1.da.avr);
   #endif
 }
 
@@ -156,7 +188,7 @@ void makeAMove()
   static uint32_t lrtimer = 0;
   static uint32_t clickTimer = 0;
   
-  // Сбрасываем таймер
+  // Начинаем отсчёт
   if(emg1.prevTrig == 0 && emg1.trig == 1) udtimer = millis();
   if(emg2.prevTrig == 0 && emg2.trig == 1) lrtimer = millis();
   if(emg1.prevTrig == 0 && emg1.trig == 1) clickTimer = millis();
@@ -169,11 +201,11 @@ void makeAMove()
     #if(MOUSE)
     // Определяем ускорение курсора
     if(!bools.lock && millis() % 
-      ((millis() - udtimer > 1500) ?
+        ((millis() - udtimer > 1500) ?
         ((millis() - udtimer > 3000) ? 1 : 3) :
         5) == 0)
       // Двигаем курсор в нужном направлении
-      Mouse.move(0, bools.elbow ? 1 : -1, 0);
+      Mouse.move(0, (bools.elbow ? 1 : -1) * MOUSEDELAY, 0);
       #endif
     }
     else
@@ -185,18 +217,18 @@ void makeAMove()
   }
 
   // Если плечо напряжнно
-  if(emg2.trig == 1)
+  /*if(emg2.trig == 1)
   {
     if(millis() - lrtimer > 600)
     {
     #if(MOUSE)
     // Определяем ускорение курсора
     if(!bools.lock && millis() % 
-      (((millis() - lrtimer > 1500) ?
+      ((millis() - lrtimer > 1500) ?
         ((millis() - lrtimer > 3000) ? 1 : 3) :
-        5) * MOUSEDELAY) == 0)
+        5) == 0)
       // Двигаем курсор в нужном направлении
-      Mouse.move((bools.shoulder ? 1 : -1) * (LEVSHA ? -1 : 1), 0, 0);
+      Mouse.move((bools.shoulder ? 1 : -1) * (LEVSHA ? -1 : 1) * MOUSEDELAY, 0, 0);
       #endif
     }
     else
@@ -205,7 +237,7 @@ void makeAMove()
       // Если плечо прижато к телу, то частота немного повышается
       bools.shoulder |= emg2.freq > emg2.thresholdFreq;
     }
-  }
+  }*/
 
   // Сброс флагов по заднему фронту
   if(emg1.prevTrig == 1 && emg1.trig == 0) bools.elbow = 0;
@@ -222,6 +254,12 @@ void makeAMove()
 
 void setup()
 {
+  pinMode(EMG1, INPUT);
+  pinMode(EMG2, INPUT);
+  pinMode(CALIBBTN, INPUT);
+  pinMode(LOCKBTN, INPUT);
+  pinMode(LED, OUTPUT);
+
   emg1.pin = EMG1;
   emg2.pin = EMG2;
 
@@ -236,8 +274,9 @@ void setup()
   digitalWrite(LED, LOW);
 
   // Первоначальная калибровка
-  bools.lock = 1;
-  while(millis() < 2000) { calc(&emg1); calc(&emg2); }
+  while(millis() < 5000) { calc(&emg1); calc(&emg2); }
+  calibrate();
+  while(millis() < 10000) { calc(&emg1); calc(&emg2); }
   calibrate();
   // bools.lock = 0;
 }
@@ -260,7 +299,7 @@ void loop()
     calc(&emg2);
   }
   
-  if(millis() - timer2 >= 100)
+  if(millis() - timer2 >= 1)
   {
     timer2 = millis();
     
