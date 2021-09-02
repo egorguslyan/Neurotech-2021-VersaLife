@@ -30,9 +30,9 @@
   // Пины
   #define LED L1
     // Бицепс
-    #define EMG1 P8
+    #define EMG1 P5
     // Плечо
-    #define EMG2 P5
+    #define EMG2 P8
   #define CALIBBTN S1
   #define LOCKBTN S2
 #endif
@@ -41,12 +41,12 @@
   // Кол-во значений для анализа триггера
   #define ARRSIZETRIG 150
   // Кол-во значений для анализа частоты
-  #define ARRSIZEFREQ 50
+  #define ARRSIZEFREQ 100
   // Кол-во попугаев, на которое должна напрячься мышца, чтобы сработал триггер
-  #define THRESHOLD 100
-  #define ELTHRESHOLD 160
+  #define THRESHOLD 120
+  #define ELTHRESHOLD 170
   // Кол-во попугаев, на которое должна увеличиться частота локтя, чтобы сработал триггер
-  #define ELTHRESHOLDFREQ 300
+  #define ELTHRESHOLDFREQ 280
   // Кол-во попугаев, на которое должна увеличиться частота плеча, чтобы сработал триггер
   #define SHTHRESHOLDFREQ 300 //80
 
@@ -54,7 +54,7 @@
 struct
 {
   uint8_t elbow : 1;
-  uint8_t shoulder : 1;
+  uint8_t lrud : 1;
   uint8_t click : 1;
   uint8_t lock : 1;
   uint8_t prevLockBtn : 1;
@@ -155,9 +155,7 @@ void calc(values4emg *emg)
 
   // Разница преодолела порог?
   emg->prevTrig = emg->trig;
-  emg->prevTrigFiltr = emg->trigFiltr;
-  emg->trig = emg->da.diff > emg->threshold;
-  emg->trigFiltr = emg->daFiltr.diff > emg->threshold;
+  emg->trig = emg->daFiltr.diff > emg->threshold;
 }
 
 // Отправляем данные в Serial или BiTronics
@@ -165,13 +163,13 @@ void sendData()
 {
   #if(BITRONICS)
   Serial.write("A0");
-  Serial.write(map(millis() % 2 ? emg2.daFiltr.diff : emg2.threshold, 0, 255, 0, 255));  
+  Serial.write(map(millis() % 2 ? emg1.daFiltr.diff : emg1.threshold, 0, 255, 0, 255));  
   Serial.write("A2");
-  Serial.write(map(millis() % 2 ? emg2.freq : emg2.thresholdFreq, 0, 1023, 0, 255));
+  Serial.write(map(millis() % 2 ? emg2.daFiltr.diff : emg2.threshold, 0, 255, 0, 255));
   Serial.write("A1");
-  Serial.write(emg2.valFiltr[0]);
+  Serial.write(map(millis() % 2 ? emg1.freq : emg1.thresholdFreq, 0, 1080, 0, 255));
   Serial.write("A3");
-  Serial.write(emg2.da.avr);
+  Serial.write(emg1.val[0]);
   #else
   Serial.print(emg1.val[0]);
   Serial.print(",");
@@ -185,13 +183,11 @@ void makeAMove()
 {
   // Таймеры движения и клика
   static uint32_t udtimer = 0;
-  static uint32_t lrtimer = 0;
   static uint32_t clickTimer = 0;
   
   // Начинаем отсчёт
   if(emg1.prevTrig == 0 && emg1.trig == 1) udtimer = millis();
-  if(emg2.prevTrig == 0 && emg2.trig == 1) lrtimer = millis();
-  if(emg1.prevTrig == 0 && emg1.trig == 1) clickTimer = millis();
+  if(emg2.prevTrig == 0 && emg2.trig == 1) clickTimer = millis();
 
   // Если бицепс напряжён
   if(emg1.trig == 1)
@@ -205,7 +201,7 @@ void makeAMove()
         ((millis() - udtimer > 3000) ? 1 : 3) :
         5) == 0)
       // Двигаем курсор в нужном направлении
-      Mouse.move(0, (bools.elbow ? 1 : -1) * MOUSEDELAY, 0);
+      Mouse.move(bools.lrud ? (bools.elbow ? 1 : -1) * (LEVSHA ? -1 : 1) * MOUSEDELAY : 0, bools.lrud ? 0 : (bools.elbow ? 1 : -1) * MOUSEDELAY, 0);
       #endif
     }
     else
@@ -217,37 +213,22 @@ void makeAMove()
   }
 
   // Если плечо напряжнно
-  /*if(emg2.trig == 1)
+  if(emg2.trig == 1)
   {
-    if(millis() - lrtimer > 600)
+    if((millis() - udtimer > 500) && (millis() - udtimer < 600))
     {
-    #if(MOUSE)
-    // Определяем ускорение курсора
-    if(!bools.lock && millis() % 
-      ((millis() - lrtimer > 1500) ?
-        ((millis() - lrtimer > 3000) ? 1 : 3) :
-        5) == 0)
-      // Двигаем курсор в нужном направлении
-      Mouse.move((bools.shoulder ? 1 : -1) * (LEVSHA ? -1 : 1) * MOUSEDELAY, 0, 0);
-      #endif
+      bools.lrud = 1;
     }
-    else
-    // Первые 600 миллисекунд определяем направление
-    {
-      // Если плечо прижато к телу, то частота немного повышается
-      bools.shoulder |= emg2.freq > emg2.thresholdFreq;
-    }
-  }*/
+  }
 
   // Сброс флагов по заднему фронту
-  if(emg1.prevTrig == 1 && emg1.trig == 0) bools.elbow = 0;
-  if(emg2.prevTrig == 1 && emg2.trig == 0) bools.shoulder = 0;
+  if(emg1.prevTrig == 1 && emg1.trig == 0) { bools.elbow = 0; bools.lrud = 0; } 
 
   // Распознаём и делаем клик
-  if(emg1.prevTrig == 1 && emg1.trig == 0)
+  if(emg2.prevTrig == 1 && emg2.trig == 0)
   {
     #if(MOUSE)
-    if(millis() - clickTimer < 700 && !bools.lock) Mouse.click(MOUSE_LEFT);
+    if(millis() - clickTimer < 700 && !(millis() - udtimer > 700) && !bools.lock) Mouse.click(MOUSE_LEFT);
     #endif
   }
 }
