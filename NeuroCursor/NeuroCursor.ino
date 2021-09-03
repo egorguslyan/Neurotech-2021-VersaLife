@@ -44,9 +44,9 @@
   #define ARRSIZEFREQ 100
   // Кол-во попугаев, на которое должна напрячься мышца, чтобы сработал триггер
   #define THRESHOLD 120
-  #define ELTHRESHOLD 170
+  #define ELTHRESHOLD 90
   // Кол-во попугаев, на которое должна увеличиться частота локтя, чтобы сработал триггер
-  #define ELTHRESHOLDFREQ 280
+  #define ELTHRESHOLDFREQ 20
   // Кол-во попугаев, на которое должна увеличиться частота плеча, чтобы сработал триггер
   #define SHTHRESHOLDFREQ 300 //80
 
@@ -62,7 +62,7 @@ struct
 
 struct diffAvr
 {
-  uint8_t diff, avr;           // Среднее, разница
+  uint8_t diff, avr;           // Среднее, разница, максимум
 };
 
 // Структура данных для каждого датчика
@@ -74,7 +74,9 @@ struct values4emg
   uint8_t valFiltr[250];        // Фильтр
   uint8_t valAvr[ARRSIZEFREQ];  // Среднее
   diffAvr da, daFiltr;          // Среднее среди ARRSIZE значений
+  uint8_t maxDiff;              // Максимальный размах
   uint16_t freq;                // Частота сигнала
+  uint16_t maxFreq;             // Максимальная частота сигнала
   uint16_t threshold;           // Порог силы
   uint16_t thresholdFreq;       // Порог частоты
   uint8_t trig : 1;             // Триггер
@@ -86,10 +88,10 @@ struct values4emg
 // Калибровка порогов срабатывания
 void calibrate()
 {
-  emg1.threshold = emg1.da.diff + THRESHOLD;
-  emg2.threshold = emg2.daFiltr.diff + ELTHRESHOLD;
-  emg1.thresholdFreq = emg1.freq + ELTHRESHOLDFREQ;
-  emg2.thresholdFreq = emg2.freq + SHTHRESHOLDFREQ;
+  emg1.threshold = emg1.maxDiff + THRESHOLD;
+  emg2.threshold = emg2.maxDiff + ELTHRESHOLD;
+  emg1.thresholdFreq = emg1.maxFreq + ELTHRESHOLDFREQ;
+  emg2.thresholdFreq = emg2.maxFreq + SHTHRESHOLDFREQ;
 }
 
 diffAvr calcAvr(uint8_t val[], uint8_t arrSize)
@@ -137,6 +139,9 @@ void calc(values4emg *emg)
   // Увеличиваем значение частоты, чтобы можно было различить на графике
   emg->freq *= 20;
 
+  if(emg->freq > emg->maxFreq) emg->maxFreq = emg->freq;
+  else if(millis() % 10 == 0) emg->maxFreq -= 1;
+
   // Считываем значение с датчика и подгоняем под формат BiTronics
   emg->val[0] = analogRead(emg->pin) >> 2;
 
@@ -153,6 +158,9 @@ void calc(values4emg *emg)
   emg->daFiltr = calcAvr(emg->valFiltr, ARRSIZETRIG);
   emg->valAvr[0] = emg->da.avr;
 
+  if(emg->daFiltr.diff > emg->maxDiff) emg->maxDiff = emg->daFiltr.diff;
+  else if(millis() % 10 == 0) emg->maxDiff -= 1;
+
   // Разница преодолела порог?
   emg->prevTrig = emg->trig;
   emg->trig = emg->daFiltr.diff > emg->threshold;
@@ -167,9 +175,9 @@ void sendData()
   Serial.write("A2");
   Serial.write(map(millis() % 2 ? emg2.daFiltr.diff : emg2.threshold, 0, 255, 0, 255));
   Serial.write("A1");
-  Serial.write(map(millis() % 2 ? emg1.freq : emg1.thresholdFreq, 0, 1080, 0, 255));
+  Serial.write(map(millis() % 2 ? emg1.freq : emg1.thresholdFreq, 0, 1024, 0, 255));
   Serial.write("A3");
-  Serial.write(emg1.val[0]);
+  Serial.write(map(millis() % 2 ? emg1.val[0] : emg1.valAvr[0], 0, 255, 0, 255));
   #else
   Serial.print(emg1.val[0]);
   Serial.print(",");
@@ -184,7 +192,13 @@ void makeAMove()
   // Таймеры движения и клика
   static uint32_t udtimer = 0;
   static uint32_t clickTimer = 0;
-  
+
+  if(bools.elbow)
+  {
+    if(emg1.prevTrig == 1) emg1.trig = 1;
+    if(emg1.daFiltr.diff < emg1.threshold - 20) emg1.trig = 0;
+  }
+
   // Начинаем отсчёт
   if(emg1.prevTrig == 0 && emg1.trig == 1) udtimer = millis();
   if(emg2.prevTrig == 0 && emg2.trig == 1) clickTimer = millis();
@@ -201,7 +215,8 @@ void makeAMove()
         ((millis() - udtimer > 3000) ? 1 : 3) :
         5) == 0)
       // Двигаем курсор в нужном направлении
-      Mouse.move(bools.lrud ? (bools.elbow ? 1 : -1) * (LEVSHA ? -1 : 1) * MOUSEDELAY : 0, bools.lrud ? 0 : (bools.elbow ? 1 : -1) * MOUSEDELAY, 0);
+      Mouse.move( bools.lrud ? (bools.elbow ? 1 : -1) * (LEVSHA ? -1 : 1) * MOUSEDELAY : 0,
+                  bools.lrud ? 0 : (bools.elbow ? 1 : -1) * MOUSEDELAY, 0);
       #endif
     }
     else
@@ -280,7 +295,7 @@ void loop()
     calc(&emg2);
   }
   
-  if(millis() - timer2 >= 1)
+  if(millis() - timer2 >= 1000)
   {
     timer2 = millis();
     
