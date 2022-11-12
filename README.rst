@@ -46,9 +46,9 @@
 Контакты для связи в Telegram                                                                                                                           
 =============================                                                                                                         
                                                                                                                                              
-Егор Гуслянцев — @egorguslyan  
+Егор Гуслянцев — @electromagneticcyclone  
 
-Иван Зубков — @kyborg_zlodey   
+Иван Зубков — @svchelovek   
 
 Пётр Орехов — @the_Yoker    
 
