@@ -46,9 +46,9 @@ As with the `Stockfish <https://stockfishchess.org/>`_ project, the algorithm is
 Telegram contact information                                                                                                                           
 =============================                                                                                                         
                                                                                                                                              
-Egor Guslyantsev - @egorguslyan  
+Egor Guslyantsev - @electromagneticcyclone  
 
-Ivan Zubkov - @kyborg_zlodey   
+Ivan Zubkov - @svchelovek   
 
 Peter Orekhov - @the_Yoker    
 
